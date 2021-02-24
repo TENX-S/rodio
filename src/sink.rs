@@ -10,6 +10,7 @@ use crate::queue;
 use crate::source::Done;
 use crate::Sample;
 use crate::Source;
+use std::sync::atomic::Ordering::Relaxed;
 
 /// Handle to an device that outputs sounds.
 ///
@@ -26,6 +27,7 @@ pub struct Sink {
 }
 
 struct Controls {
+    end: AtomicBool,
     pause: AtomicBool,
     volume: Mutex<f32>,
     stopped: AtomicBool,
@@ -48,7 +50,9 @@ impl Sink {
         let sink = Sink {
             queue_tx,
             sleep_until_end: Mutex::new(None),
+
             controls: Arc::new(Controls {
+                end: AtomicBool::new(false),
                 pause: AtomicBool::new(false),
                 volume: Mutex::new(1.0),
                 stopped: AtomicBool::new(false),
@@ -144,11 +148,23 @@ impl Sink {
         self.detached = true;
     }
 
+    /// Show the sound is end or not.
+    #[inline]
+    pub fn is_end(&self) -> bool {
+        if let Some(sleep_until_end) = self.sleep_until_end.lock().unwrap().as_ref() {
+            if sleep_until_end.try_recv().is_ok() {
+                self.controls.end.store(true, Ordering::Relaxed);
+            }
+        }
+        self.controls.end.load(Relaxed)
+    }
+
     /// Sleeps the current thread until the sound ends.
     #[inline]
     pub fn sleep_until_end(&self) {
         if let Some(sleep_until_end) = self.sleep_until_end.lock().unwrap().take() {
             let _ = sleep_until_end.recv();
+            self.controls.end.store(true, Ordering::Relaxed);
         }
     }
 
